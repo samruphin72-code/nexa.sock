@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    // Abonnement valide : non suspendu et date de fin dans le futur
+    function licensed(uid) {
+      let c = get(/databases/$(database)/documents/clients/$(uid)).data;
+      return c.get('x', false) != true && c.fin > request.time;
+    }
+
+    // Comptes administrateurs : créés à la main dans la console Firestore
+    match /admins/{uid} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
+
+    // Fiches clients : lisibles par le client concerné et par l'admin, modifiables par l'admin seulement
+    match /clients/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+    match /payments/{id} { allow read, write: if isAdmin(); }
+    match /config/{id}   { allow read: if signedIn(); allow write: if isAdmin(); }
+
+    // Données de stock : chaque client voit uniquement les siennes ; écriture bloquée si abonnement expiré
+    match /tenants/{uid}/data/{docId} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if signedIn() && request.auth.uid == uid && licensed(uid);
+    }
+  }
+}
